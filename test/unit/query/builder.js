@@ -2630,7 +2630,7 @@ describe("QueryBuilder", function() {
         bindings: ['foo', 'bar', 1]
       },
       mssql: {
-        sql: 'update [users] inner join [orders] on [users].[id] = [orders].[user_id] set [email] = ?, [name] = ? where [users].[id] = ?;select @@rowcount',
+        sql: 'update [users] set [email] = ?, [name] = ? from [users] inner join [orders] on [users].[id] = [orders].[user_id] where [users].[id] = ?;select @@rowcount',
         bindings: ['foo', 'bar', 1]
       },
       postgres: {
@@ -3032,7 +3032,7 @@ describe("QueryBuilder", function() {
         bindings: ['Boonesville', 1, 5]
       },
       mssql: {
-        sql: 'update [tblPerson] inner join [tblPersonData] on [tblPersonData].[PersonId] = [tblPerson].[PersonId] set [tblPerson].[City] = ? where [tblPersonData].[DataId] = ? and [tblPerson].[PersonId] = ?;select @@rowcount',
+        sql: 'update [tblPerson] set [tblPerson].[City] = ? from [tblPerson] inner join [tblPersonData] on [tblPersonData].[PersonId] = [tblPerson].[PersonId] where [tblPersonData].[DataId] = ? and [tblPerson].[PersonId] = ?;select @@rowcount',
         bindings: ['Boonesville', 1, 5]
       },
       postgres: {
@@ -3216,6 +3216,28 @@ describe("QueryBuilder", function() {
       postgres: {
         sql: 'select "e"."lastname", "e"."salary", (select "avg(salary)" from "employee" where dept_no = e.dept_no) as "avg_sal_dept" from "employee" as "e" where "dept_no" = ?',
         bindings: ["e.dept_no"]
+      }
+    });
+  });
+
+  it('allows first as syntax', function() {
+    testsql(qb().select(
+      'e.lastname',
+      'e.salary',
+      qb().first('salary').from('employee').whereRaw('dept_no = e.dept_no').orderBy('salary', 'desc').as('top_dept_salary')
+    ).from('employee as e')
+    .where('dept_no', '=', 'e.dept_no'), {
+      mysql: {
+        sql: 'select `e`.`lastname`, `e`.`salary`, (select `salary` from `employee` where dept_no = e.dept_no order by `salary` desc limit ?) as `top_dept_salary` from `employee` as `e` where `dept_no` = ?',
+        bindings: [1, "e.dept_no"]
+      },
+      mssql: {
+        sql: 'select [e].[lastname], [e].[salary], (select top (?) [salary] from [employee] where dept_no = e.dept_no order by [salary] desc) as [top_dept_salary] from [employee] as [e] where [dept_no] = ?',
+        bindings: [1, "e.dept_no"]
+      },
+      postgres: {
+        sql: 'select "e"."lastname", "e"."salary", (select "salary" from "employee" where dept_no = e.dept_no order by "salary" desc limit ?) as "top_dept_salary" from "employee" as "e" where "dept_no" = ?',
+        bindings: [1, "e.dept_no"]
       }
     });
   });
