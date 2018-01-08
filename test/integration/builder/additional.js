@@ -10,6 +10,75 @@ module.exports = function(knex) {
 
   describe('Additional', function () {
 
+    describe("Custom response processing", () => {
+
+      before('setup custom response handler', () => {
+        knex.client.config.postProcessResponse = (response) => {
+          response.callCount = response.callCount ? (response.callCount + 1) : 1;
+          return response;
+        };
+      });
+
+      after('restore client configuration', () => {
+        knex.client.config.postProcessResponse = null;
+      });
+
+      it('should process normal response', () => {
+        return knex('accounts').limit(1).then(res => {
+          expect(res.callCount).to.equal(1);
+        });
+      });
+
+      it('should process raw response', () => {
+        return knex.raw('select * from ??', ['accounts']).then(res => {
+        });
+      });
+
+      it('should process response done in transaction', () => {
+        return knex.transaction(trx => {
+          return trx('accounts').limit(1).then(res => {
+            expect(res.callCount).to.equal(1);
+            return res;
+          });
+        }).then(res => {
+          expect(res.callCount).to.equal(1);
+        });
+      });
+    });
+
+    describe('columnInfo with wrapIdentifier and postProcessResponse', () => {
+
+      before('setup hooks', () => {
+        knex.client.config.postProcessResponse = (response) => {
+          return _.mapKeys(response, (val, key) => {
+            return _.camelCase(key);
+          });
+        };
+
+        knex.client.config.wrapIdentifier = (id, origImpl) => {
+          return origImpl(_.snakeCase(id));
+        };
+      });
+
+      after('restore client configuration', () => {
+        knex.client.config.postProcessResponse = null;
+        knex.client.config.wrapIdentifier = null;
+      });
+
+      it('should work using camelCased table name', () => {
+        return knex('testTableTwo').columnInfo().then(res => {
+          expect(Object.keys(res)).to.eql(['id', 'accountId', 'details', 'status', 'jsonData']);
+        });
+      });
+
+      it('should work using snake_cased table name', () => {
+        return knex('test_table_two').columnInfo().then(res => {
+          expect(Object.keys(res)).to.eql(['id', 'accountId', 'details', 'status', 'jsonData']);
+        });
+      });
+
+    });
+
     it('should forward the .get() function from bluebird', function() {
       return knex('accounts').select().limit(1).then(function(accounts){
         var firstAccount = accounts[0];
@@ -57,20 +126,34 @@ module.exports = function(knex) {
         .testSql(function(tester) {
           tester('mysql', 'truncate `test_table_two`');
           tester('postgresql', 'truncate "test_table_two" restart identity');
-          tester('sqlite3', "delete from \"test_table_two\"");
+          tester('sqlite3', "delete from `test_table_two`");
           tester('oracle', "truncate table \"test_table_two\"");
           tester('mssql', 'truncate table [test_table_two]');
         })
-        .then(function() {
-
+        .then(() => {
           return knex('test_table_two')
             .select('*')
-            .then(function(resp) {
+            .then(resp => {
               expect(resp).to.have.length(0);
             });
-
+        })
+        .then(() => {
+          // Insert new data after truncate and make sure ids restart at 1.
+          // This doesn't currently work on oracle, where the created sequence
+          // needs to be manually reset.
+          if (knex.client.dialect !== 'oracle') {
+            return knex('test_table_two').insert({ status: 1 })
+              .then(res => {
+                return knex('test_table_two')
+                  .select('id')
+                  .first()
+                  .then(res => {
+                    expect(res).to.be.an('object')
+                    expect(res.id).to.equal(1);
+                  });
+              });
+          }
         });
-
     });
 
     it('should allow raw queries directly with `knex.raw`', function() {
@@ -130,12 +213,12 @@ module.exports = function(knex) {
             "type": "uuid"
           }
         });
-        tester('sqlite3', 'PRAGMA table_info(datatype_test)', [], {
+        tester('sqlite3', 'PRAGMA table_info(\`datatype_test\`)', [], {
           "enum_value": {
             "defaultValue": null,
             "maxLength": null,
             "nullable": true,
-            "type": "varchar"
+            "type": "text"
           },
           "uuid": {
             "defaultValue": null,
@@ -197,7 +280,7 @@ module.exports = function(knex) {
           "nullable": false,
           "type": "uuid"
         });
-        tester('sqlite3', 'PRAGMA table_info(datatype_test)', [], {
+        tester('sqlite3', 'PRAGMA table_info(\`datatype_test\`)', [], {
           "defaultValue": null,
           "maxLength": "36",
           "nullable": false,
@@ -224,6 +307,32 @@ module.exports = function(knex) {
       });
     });
 
+    it('#2184 - should properly escape table name for SQLite columnInfo', function() {
+      if (knex.client.dialect !== 'sqlite3') {
+        return;
+      }
+
+      return knex.schema.dropTableIfExists('group')
+        .then(function() {
+          return knex.schema.createTable('group', function(table) {
+            table.integer('foo');
+          });
+        })
+        .then(function() {
+          return knex('group').columnInfo();
+        })
+        .then(function(columnInfo) {
+          expect(columnInfo).to.deep.equal({
+            foo: {
+              type: 'integer',
+              maxLength: null,
+              nullable: true,
+              defaultValue: null,
+            },
+          });
+        });
+    });
+
     it('should allow renaming a column', function() {
       var countColumn
       switch (knex.client.dialect) {
@@ -244,7 +353,7 @@ module.exports = function(knex) {
         }).testSql(function(tester) {
           tester('mysql', ["show fields from `accounts` where field = ?"]);
           tester('postgresql', ["alter table \"accounts\" rename \"about\" to \"about_col\""]);
-          tester('sqlite3', ["PRAGMA table_info(\"accounts\")"]);
+          tester('sqlite3', ["PRAGMA table_info(`accounts`)"]);
           tester('oracle', ["alter table \"accounts\" rename column \"about\" to \"about_col\""]);
           tester('mssql', ["exec sp_rename ?, ?, 'COLUMN'"]);
         });
@@ -281,7 +390,7 @@ module.exports = function(knex) {
         }).testSql(function(tester) {
           tester('mysql', ["alter table `accounts` drop `first_name`"]);
           tester('postgresql', ['alter table "accounts" drop column "first_name"']);
-          tester('sqlite3', ["PRAGMA table_info(\"accounts\")"]);
+          tester('sqlite3', ["PRAGMA table_info(`accounts`)"]);
           tester('oracle', ['alter table "accounts" drop ("first_name")']);
           //tester('oracledb', ['alter table "accounts" drop ("first_name")']);
           tester('mssql', ["ALTER TABLE [accounts] DROP COLUMN [first_name]"]);
@@ -401,10 +510,10 @@ module.exports = function(knex) {
 
           // Ensure sleep command is removed.
           // This query will hang if a connection gets released back to the pool
-          // too early. 
+          // too early.
           // 50ms delay since killing query doesn't seem to have immediate effect to the process listing
           return Promise.resolve().then().delay(50)
-            .then(function () { 
+            .then(function () {
               return knex.raw('SHOW PROCESSLIST');
             })
             .then(function(results) {
@@ -464,6 +573,7 @@ module.exports = function(knex) {
           })
         })
         .then(function() {
+          knex.removeListener('query-response', onQueryResponse);
           expect(queryCount).to.equal(4);
         })
     });
@@ -487,6 +597,7 @@ module.exports = function(knex) {
           expect(true).to.equal(false); //Should not be resolved
         })
         .catch(function() {
+          knex.removeListener('query-error', onQueryError);
           expect(queryCount).to.equal(2);
         })
     });

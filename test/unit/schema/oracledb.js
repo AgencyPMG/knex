@@ -385,6 +385,14 @@ describe("OracleDb SchemaBuilder", function() {
     equal(1, tableSql.length);
     expect(tableSql[0].sql).to.equal('alter table "users" add "foo" decimal(5, 2)');
   });
+  
+  it("adding decimal, variable precision", function() {
+    tableSql = client.schemaBuilder().table('users', function(table) {
+      table.decimal('foo', null);
+    }).toSQL();
+    equal(1, tableSql.length);
+    expect(tableSql[0].sql).to.equal('alter table "users" add "foo" decimal');
+  });
 
   it('test adding boolean', function() {
     tableSql = client.schemaBuilder().table('users', function() {
@@ -466,7 +474,7 @@ describe("OracleDb SchemaBuilder", function() {
     }).toSQL();
 
     equal(1, tableSql.length);
-    expect(tableSql[0].sql).to.equal('alter table "users" add "created_at" timestamp with local time zone, add "updated_at" timestamp with local time zone');
+    expect(tableSql[0].sql).to.equal('alter table "users" add ("created_at" timestamp with local time zone, "updated_at" timestamp with local time zone)');
   });
 
   it('test adding binary', function() {
@@ -485,6 +493,42 @@ describe("OracleDb SchemaBuilder", function() {
 
     equal(1, tableSql.length);
     expect(tableSql[0].sql).to.equal('alter table "users" add "foo" decimal(2, 6)');
+  });
+
+  it('test set comment', function() {
+    tableSql = client.schemaBuilder().table('users', function(t) {
+      t.comment('Custom comment');
+    }).toSQL();
+
+    equal(1, tableSql.length);
+    expect(tableSql[0].sql).to.equal('comment on table "users" is \'Custom comment\'');
+  });
+
+  it('test set empty comment', function() {
+    tableSql = client.schemaBuilder().table('users', function(t) {
+      t.comment('');
+    }).toSQL();
+
+    equal(1, tableSql.length);
+    expect(tableSql[0].sql).to.equal('comment on table "users" is \'\'');
+  });
+
+  it('set comment to undefined', function() {
+    expect(function() {
+      client.schemaBuilder().table('user', function(t) {
+        t.comment();
+      }).toSQL();
+    })
+    .to.throw(TypeError);
+  });
+
+  it('set comment to null', function() {
+    expect(function() {
+      client.schemaBuilder().table('user', function(t) {
+        t.comment(null);
+      }).toSQL();
+    })
+    .to.throw(TypeError);
   });
 
   it('is possible to set raw statements in defaultTo, #146', function() {
